@@ -34,24 +34,27 @@
   window.saveToFirebase = async function(records) {
     try {
       window.showToast('Salvando no Firebase…', 'info');
-      const batch = records.map(r =>
-        addDoc(collection(db, 'avarias'), { ...r, importadoEm: serverTimestamp() })
-      );
+      const batch = records.map(r => {
+        // Serializa o registro garantindo que não há undefined
+        const clean = JSON.parse(JSON.stringify(r));
+        return addDoc(collection(db, 'avarias'), { ...clean, importadoEm: serverTimestamp() });
+      });
       await Promise.all(batch);
       window.showToast(`${records.length} avarias salvas no Firebase.`, 'ok');
     } catch (err) {
-      console.error(err);
-      window.showToast('Erro ao salvar no Firebase.', 'err');
+      console.error('saveToFirebase error:', err);
+      window.showToast('Erro ao salvar no Firebase: ' + err.message, 'err');
     }
   };
 
   // ── Salvar UMA avaria manualmente no Firestore ───────────────────────────
   window.saveOneToFirebase = async function(record) {
     try {
-      const docRef = await addDoc(collection(db, 'avarias'), { ...record, importadoEm: serverTimestamp() });
+      const clean = JSON.parse(JSON.stringify(record));
+      const docRef = await addDoc(collection(db, 'avarias'), { ...clean, importadoEm: serverTimestamp() });
       return docRef.id;
     } catch (err) {
-      console.error(err);
+      console.error('saveOneToFirebase error:', err);
       throw err;
     }
   };
@@ -62,12 +65,14 @@
       window.showToast('Carregando do Firebase…', 'info');
       const snap = await getDocs(query(collection(db, 'avarias'), orderBy('importadoEm', 'desc')));
       if (snap.empty) { window.showToast('Nenhum dado encontrado no Firebase.', 'err'); return; }
-      allData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      window._allData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Acessa allData via referência global do script principal
+      allData = window._allData;
       populateData();
       window.showToast(`${allData.length} avarias carregadas do Firebase.`, 'ok');
     } catch (err) {
-      console.error(err);
-      window.showToast('Erro ao carregar do Firebase.', 'err');
+      console.error('loadFromFirebase error:', err);
+      window.showToast('Erro ao carregar do Firebase: ' + err.message, 'err');
     }
   };
 
@@ -75,16 +80,16 @@
   window.clearFirebase = async function() {
     if (!confirm('Deseja apagar TODOS os registros do Firebase? Esta ação não pode ser desfeita.')) return;
     try {
-      showToast('Apagando registros…', 'info');
+      window.showToast('Apagando registros…', 'info');
       const snap = await getDocs(collection(db, 'avarias'));
       await Promise.all(snap.docs.map(d => deleteDoc(doc(db, 'avarias', d.id))));
       allData = [];
       ['dash-empty','igrejas-empty','prio-empty'].forEach(id=>document.getElementById(id).style.display='flex');
       ['dash-content','igrejas-content','prio-content'].forEach(id=>document.getElementById(id).style.display='none');
-      showToast('Registros apagados do Firebase.', 'ok');
+      window.showToast('Registros apagados do Firebase.', 'ok');
     } catch (err) {
-      console.error(err);
-      showToast('Erro ao apagar registros.', 'err');
+      console.error('clearFirebase error:', err);
+      window.showToast('Erro ao apagar registros: ' + err.message, 'err');
     }
   };
 
@@ -96,9 +101,14 @@
       const url = await getDownloadURL(storageRef);
       console.log('Arquivo salvo no Storage:', url);
     } catch (err) {
-      console.error('Erro no upload para Storage:', err);
+      console.error('uploadFileToStorage error:', err);
     }
   };
+
+  // ── Sinaliza que o Firebase está pronto ──────────────────────────────────
+  window._firebaseReady = true;
+  document.dispatchEvent(new Event('firebaseReady'));
+  console.log('Firebase inicializado com sucesso.');
 </script>
 
 <style>
@@ -479,6 +489,11 @@ footer span { color: var(--accent); font-weight: 500; }
   </div>
   <div class="header-spacer"></div>
   <div class="header-actions">
+    <!-- Firebase buttons -->
+    <button class="btn-firebase btn-fb-load" onclick="window.loadFromFirebase && window.loadFromFirebase()">
+      <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+      Carregar Firebase
+    </button>
     <!-- Adicionar manualmente -->
     <button class="btn-add-manual" onclick="openManualModal()">
       <svg viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -676,11 +691,30 @@ function handleFileImport(e) {
       if (!allData.length) { showToast('Nenhuma avaria encontrada no arquivo.','err'); return; }
       populateData();
       showToast(`${allData.length} avarias importadas com sucesso.`, 'ok');
-      // Salva automaticamente no Firebase após importar
-      if (window.saveToFirebase) window.saveToFirebase(allData);
-      // Upload do arquivo para o Storage
-      if (window.uploadFileToStorage) window.uploadFileToStorage(file);
-    } catch(err) { showToast('Erro ao ler o arquivo. Verifique o formato.','err'); }
+      // Salva no Firebase — aguarda o módulo estar pronto
+      function doSave() {
+        if (window.saveToFirebase) {
+          window.saveToFirebase(allData);
+        } else {
+          showToast('Firebase ainda não inicializado. Tente "Carregar Firebase" em instantes.', 'err');
+        }
+        if (window.uploadFileToStorage) window.uploadFileToStorage(file);
+      }
+      if (window._firebaseReady) {
+        doSave();
+      } else {
+        document.addEventListener('firebaseReady', doSave, { once: true });
+        // Timeout de segurança: 8 segundos
+        setTimeout(() => {
+          if (!window._firebaseReady) {
+            showToast('Firebase demorou para inicializar. Verifique o console.', 'err');
+          }
+        }, 8000);
+      }
+    } catch(err) {
+      console.error('handleFileImport error:', err);
+      showToast('Erro ao ler o arquivo. Verifique o formato.','err');
+    }
   };
   reader.readAsBinaryString(file);
   e.target.value = '';

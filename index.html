@@ -33,30 +33,41 @@
   // ── Salvar avarias no Firestore ──────────────────────────────────────────
   window.saveToFirebase = async function(records) {
     try {
-      showToast('Salvando no Firebase…', 'info');
+      window.showToast('Salvando no Firebase…', 'info');
       const batch = records.map(r =>
         addDoc(collection(db, 'avarias'), { ...r, importadoEm: serverTimestamp() })
       );
       await Promise.all(batch);
-      showToast(`${records.length} avarias salvas no Firebase.`, 'ok');
+      window.showToast(`${records.length} avarias salvas no Firebase.`, 'ok');
     } catch (err) {
       console.error(err);
-      showToast('Erro ao salvar no Firebase.', 'err');
+      window.showToast('Erro ao salvar no Firebase.', 'err');
+    }
+  };
+
+  // ── Salvar UMA avaria manualmente no Firestore ───────────────────────────
+  window.saveOneToFirebase = async function(record) {
+    try {
+      const docRef = await addDoc(collection(db, 'avarias'), { ...record, importadoEm: serverTimestamp() });
+      return docRef.id;
+    } catch (err) {
+      console.error(err);
+      throw err;
     }
   };
 
   // ── Carregar avarias do Firestore ────────────────────────────────────────
   window.loadFromFirebase = async function() {
     try {
-      showToast('Carregando do Firebase…', 'info');
+      window.showToast('Carregando do Firebase…', 'info');
       const snap = await getDocs(query(collection(db, 'avarias'), orderBy('importadoEm', 'desc')));
-      if (snap.empty) { showToast('Nenhum dado encontrado no Firebase.', 'err'); return; }
+      if (snap.empty) { window.showToast('Nenhum dado encontrado no Firebase.', 'err'); return; }
       allData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       populateData();
-      showToast(`${allData.length} avarias carregadas do Firebase.`, 'ok');
+      window.showToast(`${allData.length} avarias carregadas do Firebase.`, 'ok');
     } catch (err) {
       console.error(err);
-      showToast('Erro ao carregar do Firebase.', 'err');
+      window.showToast('Erro ao carregar do Firebase.', 'err');
     }
   };
 
@@ -382,6 +393,66 @@ select.filter:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37
 .t-err  .t-icon { background: var(--red-bg);    color: var(--red); }
 .t-info .t-icon { background: var(--accent-bg); color: var(--accent); }
 
+
+/* MODAL */
+.modal-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.35);
+  z-index: 500; align-items: center; justify-content: center; padding: 20px;
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow-md);
+  width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto;
+}
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 22px; border-bottom: 1px solid var(--border);
+}
+.modal-title { font-size: 15px; font-weight: 600; }
+.modal-close {
+  background: none; border: none; cursor: pointer; color: var(--muted);
+  display: flex; align-items: center; padding: 4px; border-radius: 6px;
+}
+.modal-close:hover { background: var(--surface2); color: var(--text); }
+.modal-close svg { width: 18px; height: 18px; stroke: currentColor; fill: none; }
+.modal-body { padding: 22px; display: flex; flex-direction: column; gap: 14px; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-group { display: flex; flex-direction: column; gap: 5px; }
+.form-group label { font-size: 11px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; font-family: var(--mono); }
+.form-group input, .form-group select, .form-group textarea {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  color: var(--text); font-family: var(--font); font-size: 13px;
+  padding: 9px 12px; outline: none; transition: border-color .15s, box-shadow .15s;
+}
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+  border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+}
+.form-group textarea { resize: vertical; min-height: 80px; }
+.modal-footer {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 16px 22px; border-top: 1px solid var(--border);
+}
+.btn-cancel {
+  background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 8px 16px; font-family: var(--font);
+  font-size: 13px; font-weight: 500; cursor: pointer; transition: background .15s;
+}
+.btn-cancel:hover { background: var(--border); }
+.btn-add-manual {
+  background: var(--accent); color: #fff; border: none; border-radius: var(--r);
+  padding: 8px 14px; font-family: var(--font); font-size: 12px; font-weight: 500;
+  cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all .15s;
+}
+.btn-add-manual:hover { background: #1d4ed8; }
+.btn-add-manual svg { width: 13px; height: 13px; stroke: #fff; fill: none; }
+.btn-save-manual {
+  background: var(--accent); color: #fff; border: none; border-radius: var(--r);
+  padding: 9px 20px; font-family: var(--font); font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: background .15s;
+}
+.btn-save-manual:hover { background: #1d4ed8; }
+.btn-save-manual:disabled { opacity: .6; cursor: not-allowed; }
+
 /* FOOTER */
 footer {
   background: var(--surface); border-top: 1px solid var(--border);
@@ -408,6 +479,13 @@ footer span { color: var(--accent); font-weight: 500; }
   </div>
   <div class="header-spacer"></div>
   <div class="header-actions">
+    <!-- Adicionar manualmente -->
+    <button class="btn-add-manual" onclick="openManualModal()">
+      <svg viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+      Adicionar Avaria
+    </button>
     <!-- Importar Excel -->
     <button class="btn-import" onclick="document.getElementById('file-input').click()">
       <svg viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -506,6 +584,72 @@ footer span { color: var(--accent); font-weight: 500; }
     </div>
   </div>
 
+</div>
+
+
+<!-- MODAL CADASTRO MANUAL -->
+<div class="modal-overlay" id="modal-manual" onclick="closeManualModal(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Adicionar Avaria Manualmente</span>
+      <button class="modal-close" onclick="closeManualModal()">
+        <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Casa de Oração *</label>
+        <input type="text" id="m-casa" placeholder="Ex: 001 - Centro">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Item de Inspeção *</label>
+          <input type="text" id="m-item" placeholder="Ex: Telhado">
+        </div>
+        <div class="form-group">
+          <label>Tipo de Verificação</label>
+          <input type="text" id="m-tipo" placeholder="Ex: Visual">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Descrição da Avaria *</label>
+        <textarea id="m-avaria" placeholder="Descreva a avaria encontrada…"></textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Status</label>
+          <select id="m-status">
+            <option value="Pendente">Pendente</option>
+            <option value="Em Andamento">Em Andamento</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Data</label>
+          <input type="date" id="m-data">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Risco SS</label>
+          <select id="m-risco">
+            <option value="Não">Não</option>
+            <option value="Sim">Sim</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Resp. ADM</label>
+          <select id="m-resp">
+            <option value="Não">Não</option>
+            <option value="Sim">Sim</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeManualModal()">Cancelar</button>
+      <button class="btn-save-manual" id="btn-save-manual" onclick="saveManualAvaria()">Salvar Avaria</button>
+    </div>
+  </div>
 </div>
 
 <!-- FOOTER -->
@@ -803,6 +947,74 @@ function exportXLS(casaName) {
   showToast(`XLS exportado — ${shortName}`, 'ok');
 }
 
+
+function openManualModal() {
+  // Set today's date as default
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('m-data').value = today;
+  // Clear fields
+  ['m-casa','m-item','m-tipo','m-avaria'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('m-status').value = 'Pendente';
+  document.getElementById('m-risco').value = 'Não';
+  document.getElementById('m-resp').value = 'Não';
+  document.getElementById('modal-manual').classList.add('open');
+}
+
+function closeManualModal(e) {
+  if (e && e.target !== document.getElementById('modal-manual')) return;
+  document.getElementById('modal-manual').classList.remove('open');
+}
+
+async function saveManualAvaria() {
+  const casa   = document.getElementById('m-casa').value.trim();
+  const item   = document.getElementById('m-item').value.trim();
+  const avaria = document.getElementById('m-avaria').value.trim();
+  if (!casa || !item || !avaria) {
+    showToast('Preencha os campos obrigatórios (*).', 'err');
+    return;
+  }
+  const dataRaw = document.getElementById('m-data').value;
+  let dataStr = '';
+  if (dataRaw) {
+    const [y,m,d] = dataRaw.split('-');
+    dataStr = d+'/'+m+'/'+y;
+  }
+  const num = allData.length ? Math.max(...allData.map(r=>r.num||0)) + 1 : 1;
+  const record = {
+    num,
+    casa,
+    item,
+    tipoInsp: document.getElementById('m-tipo').value.trim(),
+    avaria,
+    status:   document.getElementById('m-status').value,
+    riscoSS:  document.getElementById('m-risco').value,
+    respAdm:  document.getElementById('m-resp').value,
+    data:     dataStr,
+  };
+
+  const btn = document.getElementById('btn-save-manual');
+  btn.disabled = true;
+  btn.textContent = 'Salvando…';
+
+  try {
+    if (window.saveOneToFirebase) {
+      const id = await window.saveOneToFirebase(record);
+      record.id = id;
+      showToast('Avaria salva no Firebase!', 'ok');
+    } else {
+      showToast('Avaria adicionada localmente.', 'ok');
+    }
+    allData.push(record);
+    populateData();
+    document.getElementById('modal-manual').classList.remove('open');
+  } catch(err) {
+    showToast('Erro ao salvar avaria.', 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Salvar Avaria';
+  }
+}
+
 function switchTab(name, el) {
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
@@ -810,7 +1022,7 @@ function switchTab(name, el) {
   el.classList.add('active');
 }
 
-function showToast(msg, type) {
+window.showToast = function showToast(msg, type) {
   const t=document.getElementById('toast');
   const icons = { ok:'✓', err:'✕', info:'↻' };
   document.getElementById('t-icon').textContent = icons[type] || '✓';

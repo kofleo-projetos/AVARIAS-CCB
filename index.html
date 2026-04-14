@@ -9,6 +9,11 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.29/jspdf.plugin.autotable.min.js"></script>
 
+<!-- Variáveis globais compartilhadas entre o módulo Firebase e o script principal -->
+<script>
+  var tratamentos = [];
+</script>
+
 <!-- Firebase SDK -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -61,18 +66,58 @@
 
   // ── Carregar avarias do Firestore ────────────────────────────────────────
   window.loadFromFirebase = async function() {
+    const toast = (msg, type) => window.showToast ? window.showToast(msg, type) : console.log(`[${type}] ${msg}`);
     try {
-      window.showToast('Carregando do Firebase…', 'info');
+      toast('Carregando do Firebase…', 'info');
       const snap = await getDocs(query(collection(db, 'avarias'), orderBy('importadoEm', 'desc')));
-      if (snap.empty) { window.showToast('Nenhum dado encontrado no Firebase.', 'err'); return; }
-      window._allData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // Acessa allData via referência global do script principal
+      if (snap.empty) { toast('Nenhum dado encontrado no Firebase.', 'err'); return; }
+
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // Separa avarias de tratamentos (tratamentos têm colecao:'tratamentos')
+      const avariaDocs    = docs.filter(d => d.colecao !== 'tratamentos');
+      const tratamentoDocs = docs.filter(d => d.colecao === 'tratamentos');
+
+      // Sanitiza avarias: garante que campos essenciais existam
+      window._allData = avariaDocs.map(d => ({
+        id:       d.id,
+        num:      d.num      || 0,
+        casa:     String(d.casa     || ''),
+        item:     String(d.item     || ''),
+        tipoInsp: String(d.tipoInsp || ''),
+        avaria:   String(d.avaria   || ''),
+        status:   String(d.status   || 'Pendente'),
+        respAdm:  String(d.respAdm  || 'Não'),
+        riscoSS:  String(d.riscoSS  || 'Não'),
+        data:     String(d.data     || ''),
+      }));
+
       allData = window._allData;
+
+      // Carrega tratamentos salvos no Firebase (se houver)
+      if (tratamentoDocs.length > 0) {
+        tratamentos = tratamentoDocs.map(d => ({
+          _id:         d._id || d.id,
+          _fbId:       d.id,
+          avariaIdx:   d.avariaIdx,
+          avariaRef:   d.avariaRef   || '',
+          sessao:      d.sessao      || '',
+          descricao:   d.descricao   || '',
+          responsavel: d.responsavel || '',
+          prioridade:  d.prioridade  || '',
+          etapa:       d.etapa       || '',
+          situacao:    d.situacao    || '',
+          dataCriacao: d.dataCriacao || '',
+          prazo:       d.prazo       || '',
+          materiais:   d.materiais   || [],
+        }));
+      }
+
       populateData();
-      window.showToast(`${allData.length} avarias carregadas do Firebase.`, 'ok');
+      toast(`${allData.length} avarias e ${tratamentoDocs.length} tratamentos carregados.`, 'ok');
     } catch (err) {
       console.error('loadFromFirebase error:', err);
-      window.showToast('Erro ao carregar do Firebase: ' + err.message, 'err');
+      toast('Erro ao carregar do Firebase: ' + err.message, 'err');
     }
   };
 
@@ -109,6 +154,14 @@
   window._firebaseReady = true;
   document.dispatchEvent(new Event('firebaseReady'));
   console.log('Firebase inicializado com sucesso.');
+
+  // ── Carrega automaticamente ao iniciar ───────────────────────────────────
+  // Aguarda o script principal estar pronto antes de carregar
+  if (document.readyState === 'complete') {
+    window.loadFromFirebase();
+  } else {
+    window.addEventListener('load', () => window.loadFromFirebase());
+  }
 </script>
 
 <style>
@@ -355,10 +408,19 @@ select.filter:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37
 .priority-grid { display: flex; flex-direction: column; gap: 6px; }
 .priority-row {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
-  display: grid; grid-template-columns: 52px 1fr 170px 110px 110px 100px 90px;
+  display: grid; grid-template-columns: 52px 1fr 170px 110px 110px 100px 90px 100px;
   align-items: center; padding: 10px 14px; gap: 12px; font-size: 12px;
   box-shadow: var(--shadow); transition: box-shadow .15s;
 }
+.btn-tratar-avaria {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: var(--r);
+  font-family: var(--font); font-size: 11px; font-weight: 500;
+  cursor: pointer; transition: all .15s; white-space: nowrap;
+  border: 1px solid #bfdbfe; background: var(--accent-bg); color: var(--accent);
+}
+.btn-tratar-avaria:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-tratar-avaria svg { flex-shrink: 0; }
 .priority-row:hover { box-shadow: var(--shadow-md); }
 .priority-row.hdr {
   background: transparent; border-color: transparent; box-shadow: none;
@@ -556,11 +618,6 @@ footer span { color: var(--accent); font-weight: 500; }
   </div>
   <div class="header-spacer"></div>
   <div class="header-actions">
-    <!-- Firebase buttons -->
-    <button class="btn-firebase btn-fb-load" onclick="window.loadFromFirebase && window.loadFromFirebase()">
-      <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
-      Carregar Firebase
-    </button>
     <!-- Adicionar manualmente -->
     <button class="btn-add-manual" onclick="openManualModal()">
       <svg viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -705,6 +762,10 @@ footer span { color: var(--accent); font-weight: 500; }
             <svg viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;stroke:#fff;fill:none"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             Novo Tratamento
           </button>
+          <button class="btn-sm btn-pdf" style="padding:8px 14px;font-size:12px;display:flex;align-items:center;gap:6px" onclick="exportTratamentosPDF()">
+            <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" fill="none" stroke="currentColor" style="width:13px;height:13px"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+            Exportar PDF
+          </button>
           <span class="count-tag" id="tratar-count"></span>
         </div>
         <div id="tratar-lista"></div>
@@ -712,7 +773,7 @@ footer span { color: var(--accent); font-weight: 500; }
 
       <!-- FORMULÁRIO DE TRATAMENTO -->
       <div id="tratar-form-wrap" style="display:none">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
           <button class="btn-cancel" onclick="voltarListaTratar()">
             <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
             Voltar
@@ -720,139 +781,127 @@ footer span { color: var(--accent); font-weight: 500; }
           <h2 style="font-size:16px;font-weight:600;color:var(--text)" id="tratar-form-titulo">Novo Tratamento</h2>
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-
-          <!-- COLUNA ESQUERDA -->
-          <div style="display:flex;flex-direction:column;gap:14px">
-
-            <div class="card-wrap">
-              <div class="sec-label">Identificação</div>
-              <div style="display:flex;flex-direction:column;gap:10px">
-                <div class="form-group">
-                  <label>Avaria *</label>
-                  <select id="tr-avaria" onchange="preencherAvaria()">
-                    <option value="">— Selecione a avaria —</option>
-                  </select>
-                </div>
-                <div id="tr-avaria-preview" style="display:none;background:var(--accent-bg);border:1px solid #bfdbfe;border-radius:var(--r);padding:10px 12px;font-size:12px;color:var(--accent)"></div>
-                <div class="form-row">
-                  <div class="form-group">
-                    <label>Data de Criação *</label>
-                    <input type="date" id="tr-data-criacao">
-                  </div>
-                  <div class="form-group">
-                    <label>Prazo de Conclusão</label>
-                    <input type="date" id="tr-prazo">
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="card-wrap">
-              <div class="sec-label">Sessão</div>
-              <div style="display:flex;flex-direction:column;gap:10px">
-                <div class="form-group">
-                  <label>Item / Sessão</label>
-                  <input type="text" id="tr-sessao" placeholder="Ex: Sistema de Som">
-                </div>
-                <div class="form-group">
-                  <label>Descrição da Tarefa *</label>
-                  <textarea id="tr-descricao" style="min-height:90px" placeholder="Descreva detalhadamente a tarefa a ser realizada..."></textarea>
-                </div>
-              </div>
-            </div>
-
-            <div class="card-wrap">
-              <div class="sec-label">Responsável e Prioridade</div>
-              <div class="form-row">
-                <div class="form-group">
-                  <label>Responsável</label>
-                  <input type="text" id="tr-responsavel" placeholder="Nome do responsável">
-                </div>
-                <div class="form-group">
-                  <label>Prioridade</label>
-                  <select id="tr-prioridade">
-                    <option value="">— Selecione —</option>
-                    <option value="critical">Crítica</option>
-                    <option value="alta">Alta</option>
-                    <option value="media">Média</option>
-                    <option value="baixa">Baixa</option>
-                  </select>
-                </div>
-              </div>
-              <div class="form-row" style="margin-top:10px">
-                <div class="form-group">
-                  <label>Etapa</label>
-                  <select id="tr-etapa">
-                    <option value="">— Selecione —</option>
-                    <option value="A">A – Planejamento</option>
-                    <option value="B">B – Lista de Materiais</option>
-                    <option value="C">C – Compras</option>
-                    <option value="D">D – Em Instalação</option>
-                    <option value="E">Concluído</option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label>Situação</label>
-                  <select id="tr-situacao">
-                    <option value="">— Selecione —</option>
-                    <option value="A">A – Não Iniciado</option>
-                    <option value="B">B – Iniciado</option>
-                    <option value="C">C – Em Finalização</option>
-                    <option value="D">D – Concluído</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
+        <!-- LINHA 1: Avaria + Datas + Status -->
+        <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+          <div class="card-wrap" style="padding:14px">
+            <div class="sec-label" style="margin-bottom:8px">Avaria *</div>
+            <select id="tr-avaria" onchange="preencherAvaria()" style="width:100%">
+              <option value="">— Selecione a avaria —</option>
+            </select>
+            <div id="tr-avaria-preview" style="display:none;background:var(--accent-bg);border:1px solid #bfdbfe;border-radius:var(--r);padding:8px 10px;font-size:11px;color:var(--accent);margin-top:8px"></div>
           </div>
-
-          <!-- COLUNA DIREITA: MATERIAIS -->
-          <div style="display:flex;flex-direction:column;gap:14px">
-
-            <div class="card-wrap" style="flex:1">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-                <div class="sec-label" style="margin:0">Solicitação de Materiais</div>
-                <div style="display:flex;gap:6px">
-                  <button class="btn-sm" onclick="addMaterialRow('A')" style="font-size:11px;padding:5px 10px">
-                    <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" fill="none" stroke="currentColor" width="12" height="12"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Material
-                  </button>
-                  <button class="btn-sm" onclick="addMaterialRow('B')" style="font-size:11px;padding:5px 10px;color:var(--accent);border-color:#bfdbfe;background:var(--accent-bg)">
-                    <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" fill="none" stroke="currentColor" width="12" height="12"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Mão de Obra
-                  </button>
-                </div>
-              </div>
-
-              <div id="materiais-lista" style="display:flex;flex-direction:column;gap:6px;min-height:60px">
-                <div id="materiais-empty-msg" style="text-align:center;color:var(--muted2);font-size:12px;padding:20px 0">
-                  Clique em "+ Material" ou "+ Mão de Obra" para adicionar itens
-                </div>
-              </div>
-
-              <!-- TOTAIS -->
-              <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px;display:flex;flex-direction:column;gap:6px">
-                <div style="display:flex;justify-content:space-between;font-size:12px">
-                  <span style="color:var(--muted)">Total Materiais</span>
-                  <span id="total-material" style="font-family:var(--mono);font-weight:500">R$ 0,00</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;font-size:12px">
-                  <span style="color:var(--muted)">Total Mão de Obra</span>
-                  <span id="total-mdo" style="font-family:var(--mono);font-weight:500">R$ 0,00</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;border-top:1px solid var(--border);padding-top:8px;margin-top:2px">
-                  <span>Total Geral</span>
-                  <span id="total-geral" style="font-family:var(--mono);color:var(--accent)">R$ 0,00</span>
-                </div>
-              </div>
+          <div class="card-wrap" style="padding:14px">
+            <div class="form-group">
+              <label>Data de Criação *</label>
+              <input type="date" id="tr-data-criacao">
             </div>
-
+          </div>
+          <div class="card-wrap" style="padding:14px">
+            <div class="form-group">
+              <label>Prazo de Conclusão</label>
+              <input type="date" id="tr-prazo">
+            </div>
+          </div>
+          <div class="card-wrap" style="padding:14px">
+            <div class="form-group">
+              <label>Prioridade</label>
+              <select id="tr-prioridade">
+                <option value="">— Selecione —</option>
+                <option value="critical">Crítica</option>
+                <option value="alta">Alta</option>
+                <option value="media">Média</option>
+                <option value="baixa">Baixa</option>
+              </select>
+            </div>
           </div>
         </div>
 
+        <!-- LINHA 2: Sessão/Descrição + Responsável/Etapa/Situação + Materiais -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:12px;margin-bottom:12px">
+
+          <!-- Sessão e Descrição -->
+          <div class="card-wrap" style="padding:14px;display:flex;flex-direction:column;gap:10px">
+            <div class="sec-label" style="margin-bottom:0">Sessão</div>
+            <div class="form-group">
+              <label>Item / Sessão</label>
+              <input type="text" id="tr-sessao" placeholder="Ex: Sistema de Som">
+            </div>
+            <div class="form-group" style="flex:1">
+              <label>Descrição da Tarefa *</label>
+              <textarea id="tr-descricao" style="min-height:80px;flex:1" placeholder="Descreva detalhadamente a tarefa a ser realizada..."></textarea>
+            </div>
+          </div>
+
+          <!-- Responsável, Etapa, Situação -->
+          <div class="card-wrap" style="padding:14px;display:flex;flex-direction:column;gap:10px">
+            <div class="sec-label" style="margin-bottom:0">Responsável e Andamento</div>
+            <div class="form-group">
+              <label>Responsável</label>
+              <input type="text" id="tr-responsavel" placeholder="Nome do responsável">
+            </div>
+            <div class="form-group">
+              <label>Etapa</label>
+              <select id="tr-etapa">
+                <option value="">— Selecione —</option>
+                <option value="A">A – Planejamento</option>
+                <option value="B">B – Lista de Materiais</option>
+                <option value="C">C – Compras</option>
+                <option value="D">D – Em Instalação</option>
+                <option value="E">Concluído</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Situação</label>
+              <select id="tr-situacao">
+                <option value="">— Selecione —</option>
+                <option value="A">A – Não Iniciado</option>
+                <option value="B">B – Iniciado</option>
+                <option value="C">C – Em Finalização</option>
+                <option value="D">D – Concluído</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Materiais -->
+          <div class="card-wrap" style="padding:14px;display:flex;flex-direction:column">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+              <div class="sec-label" style="margin:0">Solicitação de Materiais</div>
+              <div style="display:flex;gap:6px">
+                <button class="btn-sm" onclick="addMaterialRow('A')" style="font-size:11px;padding:4px 9px">
+                  <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" fill="none" stroke="currentColor" width="11" height="11"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  Material
+                </button>
+                <button class="btn-sm" onclick="addMaterialRow('B')" style="font-size:11px;padding:4px 9px;color:var(--accent);border-color:#bfdbfe;background:var(--accent-bg)">
+                  <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" fill="none" stroke="currentColor" width="11" height="11"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  Mão de Obra
+                </button>
+              </div>
+            </div>
+            <div id="materiais-lista" style="display:flex;flex-direction:column;gap:5px;flex:1;min-height:50px">
+              <div id="materiais-empty-msg" style="text-align:center;color:var(--muted2);font-size:12px;padding:16px 0">
+                Clique em "+ Material" ou "+ Mão de Obra"
+              </div>
+            </div>
+            <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;display:flex;flex-direction:column;gap:5px">
+              <div style="display:flex;justify-content:space-between;font-size:12px">
+                <span style="color:var(--muted)">Total Materiais</span>
+                <span id="total-material" style="font-family:var(--mono);font-weight:500">R$ 0,00</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:12px">
+                <span style="color:var(--muted)">Total Mão de Obra</span>
+                <span id="total-mdo" style="font-family:var(--mono);font-weight:500">R$ 0,00</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;border-top:1px solid var(--border);padding-top:7px;margin-top:2px">
+                <span>Total Geral</span>
+                <span id="total-geral" style="font-family:var(--mono);color:var(--accent)">R$ 0,00</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
         <!-- BOTÕES SALVAR -->
-        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid var(--border)">
+        <div style="display:flex;justify-content:flex-end;gap:10px;padding-top:12px;border-top:1px solid var(--border)">
           <button class="btn-cancel" onclick="voltarListaTratar()">Cancelar</button>
           <button class="btn-save-manual" id="btn-salvar-tratamento" onclick="salvarTratamento()">Salvar Tratamento</button>
         </div>
@@ -1056,7 +1105,7 @@ function renderDashboard() {
     </div>`).join('');
 
   const ic = {};
-  allData.forEach(r=>{ const k=r.item.trim(); ic[k]=(ic[k]||0)+1; });
+  allData.forEach(r=>{ const k=(r.item||'').trim(); ic[k]=(ic[k]||0)+1; });
   const top6 = Object.entries(ic).sort((a,b)=>b[1]-a[1]).slice(0,6);
   document.getElementById('top-items').innerHTML = top6.map(([name,count])=>`
     <div class="bar-row">
@@ -1160,9 +1209,10 @@ function renderPrioridades() {
     return true;
   }).sort((a,b)=>order[getPriority(a)]-order[getPriority(b)]||a.casa.localeCompare(b.casa));
   document.getElementById('prio-count').textContent = `${filtered.length} avarias`;
-  const hdr=`<div class="priority-row hdr"><span>N°</span><span>Igreja / Descrição</span><span>Item</span><span>Data</span><span>Status</span><span>Risco SS</span><span>Prioridade</span></div>`;
-  const rows=filtered.map(r=>{
+  const hdr=`<div class="priority-row hdr"><span>N°</span><span>Igreja / Descrição</span><span>Item</span><span>Data</span><span>Status</span><span>Risco SS</span><span>Prioridade</span><span></span></div>`;
+  const rows=filtered.map((r,_)=>{
     const sc=r.casa.split(' - ')[1]||r.casa;
+    const avariaIdx = allData.indexOf(r);
     return `<div class="priority-row">
       <span class="pr-num">${r.num}</span>
       <span class="pr-church">${sc}<small>${r.avaria.length>55?r.avaria.slice(0,55)+'…':r.avaria}</small></span>
@@ -1171,6 +1221,10 @@ function renderPrioridades() {
       <span><span class="badge ${r.status==='Pendente'?'b-pend':'b-and'}">${r.status}</span></span>
       <span class="${r.riscoSS==='Sim'?'tc-ss-yes':'tc-ss-no'}">${r.riscoSS==='Sim'?'Sim':'Não'}</span>
       <span>${prioBadge(getPriority(r))}</span>
+      <span><button class="btn-tratar-avaria" onclick="tratarAvariaFromPrio(${avariaIdx})" title="Tratar esta avaria">
+        <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="11" height="11" fill="none" stroke="currentColor"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+        Tratar
+      </button></span>
     </div>`;
   }).join('');
   document.getElementById('priority-list').innerHTML = hdr+(rows||`<div class="empty-state" style="padding:40px"><div class="empty-icon"><svg viewBox="0 0 24 24" stroke-width="1.5"><polyline points="20 6 9 17 4 12"/></svg></div><p>Nenhuma avaria neste filtro.</p></div>`);
@@ -1314,7 +1368,6 @@ async function saveManualAvaria() {
 // ═══════════════════════════════════════════════════════
 // TRATAR AVARIA
 // ═══════════════════════════════════════════════════════
-let tratamentos = [];
 let tratamentoEditandoId = null;
 let materiaisRows = [];
 let matRowId = 0;
@@ -1403,6 +1456,46 @@ function voltarListaTratar() {
   document.getElementById('tratar-lista-wrap').style.display = 'block';
   renderTratarLista();
 }
+
+function tratarAvariaFromPrio(avariaIdx) {
+  // Navega para a aba Tratar Avaria
+  const tabTratar = document.querySelector('.tab[onclick*="tratar"]');
+  if (tabTratar) switchTab('tratar', tabTratar);
+
+  // Aguarda o initTratarTab processar e então abre o form com a avaria selecionada
+  setTimeout(() => {
+    // Garante que o form está no estado "Novo Tratamento"
+    tratamentoEditandoId = null;
+    materiaisRows = [];
+    matRowId = 0;
+    document.getElementById('materiais-lista').innerHTML =
+      '<div id="materiais-empty-msg" style="text-align:center;color:var(--muted2);font-size:12px;padding:20px 0">Clique em "+ Material" ou "+ Mão de Obra" para adicionar itens</div>';
+    atualizarTotais();
+    document.getElementById('tratar-form-titulo').textContent = 'Novo Tratamento';
+    ['tr-sessao','tr-descricao','tr-responsavel','tr-prazo'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+    document.getElementById('tr-prioridade').value = '';
+    document.getElementById('tr-etapa').value = '';
+    document.getElementById('tr-situacao').value = '';
+    document.getElementById('tr-data-criacao').value = new Date().toISOString().split('T')[0];
+    document.getElementById('tr-avaria-preview').style.display = 'none';
+
+    // Seleciona a avaria correspondente
+    popularSelectAvaria();
+    document.getElementById('tr-avaria').value = avariaIdx;
+    preencherAvaria();
+
+    // Pré-preenche prioridade com base na avaria
+    const r = allData[avariaIdx];
+    if (r) document.getElementById('tr-prioridade').value = getPriority(r);
+
+    // Exibe o formulário
+    document.getElementById('tratar-lista-wrap').style.display = 'none';
+    document.getElementById('tratar-form-wrap').style.display  = 'block';
+  }, 50);
+}
+
 
 function addMaterialRow(tipo) {
   const emptyMsg = document.getElementById('materiais-empty-msg');
@@ -1576,6 +1669,146 @@ function renderTratarLista() {
   }).join('');
 
   lista.innerHTML = hdr + rows;
+}
+
+function exportTratamentosPDF() {
+  if (!tratamentos.length) { showToast('Nenhum tratamento cadastrado.', 'err'); return; }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const today = new Date().toLocaleDateString('pt-BR');
+  const pageW = 210;
+  const margin = 14;
+
+  const PRIO_LABEL_PT = { critical:'Crítica', alta:'Alta', media:'Média', baixa:'Baixa' };
+  const ETAPA_LABEL_PT = { A:'Planejamento', B:'Lista de Materiais', C:'Compras', D:'Em Instalação', E:'Concluído' };
+  const SIT_LABEL_PT   = { A:'Não Iniciado', B:'Iniciado', C:'Em Finalização', D:'Concluído' };
+
+  // Agrupa tratamentos por igreja (via avariaRef ou "Sem Igreja")
+  const grupos = {};
+  tratamentos.forEach(t => {
+    // Tenta extrair o nome da igreja do avariaRef ou do allData
+    let igreja = 'Sem Igreja Vinculada';
+    if (t.avariaIdx !== undefined && allData[t.avariaIdx]) {
+      const r = allData[t.avariaIdx];
+      const parts = r.casa.split(' - ');
+      igreja = parts[1] ? `${parts[0]} – ${parts[1]}` : r.casa;
+    } else if (t.avariaRef) {
+      // Tenta extrair do campo avariaRef (formato: "#num · NomeIgreja — item")
+      const m = t.avariaRef.match(/·\s(.+?)\s—/);
+      if (m) igreja = m[1].trim();
+    }
+    (grupos[igreja] = grupos[igreja] || []).push(t);
+  });
+
+  const igrejas = Object.keys(grupos).sort();
+
+  // ── Capa / Cabeçalho do documento ──────────────────────────────────────
+  doc.setFillColor(37, 99, 235);
+  doc.rect(0, 0, pageW, 32, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(15); doc.setFont('helvetica', 'bold');
+  doc.text('CCB Caieiras — Relatório de Tratamento de Avarias', margin, 13);
+  doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+  doc.text(`Emitido em: ${today}   ·   Total de tratamentos: ${tratamentos.length}   ·   Igrejas: ${igrejas.length}`, margin, 22);
+
+  let y = 40;
+
+  igrejas.forEach((igreja, igIdx) => {
+    const lista = grupos[igreja];
+
+    // Verifica se precisa de nova página para o bloco
+    if (y > 250) { doc.addPage(); y = 16; }
+
+    // Cabeçalho da Igreja
+    doc.setFillColor(239, 246, 255);
+    doc.setDrawColor(191, 219, 254);
+    doc.roundedRect(margin, y, pageW - margin * 2, 9, 2, 2, 'FD');
+    doc.setTextColor(37, 99, 235);
+    doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+    doc.text(`${igIdx + 1}.  ${igreja}`, margin + 4, y + 6);
+    doc.setTextColor(100, 116, 139);
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+    doc.text(`${lista.length} tratamento${lista.length > 1 ? 's' : ''}`, pageW - margin - 2, y + 6, { align: 'right' });
+    y += 13;
+
+    // Tabela de tratamentos desta igreja
+    const bodyRows = lista.map(t => {
+      const mat = (t.materiais || []);
+      const totalMat = mat.filter(m => m.tipo === 'A').reduce((s, m) => s + (parseFloat(m.preco) || 0), 0);
+      const totalMdo = mat.filter(m => m.tipo === 'B').reduce((s, m) => s + (parseFloat(m.preco) || 0), 0);
+      const totalGeral = totalMat + totalMdo;
+      const fmtR = v => v > 0 ? 'R$ ' + v.toFixed(2).replace('.', ',') : '—';
+      return [
+        t.descricao.length > 55 ? t.descricao.slice(0, 55) + '…' : t.descricao,
+        t.responsavel || '—',
+        PRIO_LABEL_PT[t.prioridade] || '—',
+        t.etapa ? `${t.etapa} – ${ETAPA_LABEL_PT[t.etapa] || ''}` : '—',
+        t.situacao ? `${t.situacao} – ${SIT_LABEL_PT[t.situacao] || ''}` : '—',
+        t.prazo ? t.prazo.split('-').reverse().join('/') : '—',
+        fmtR(totalGeral),
+      ];
+    });
+
+    const PRIO_COLORS = { 'Crítica':[220,38,38], 'Alta':[217,119,6], 'Média':[37,99,235], 'Baixa':[22,163,74] };
+
+    doc.autoTable({
+      head: [['Descrição', 'Responsável', 'Prioridade', 'Etapa', 'Situação', 'Prazo', 'Custo']],
+      body: bodyRows,
+      startY: y,
+      margin: { left: margin, right: margin },
+      styles: {
+        fontSize: 8, cellPadding: 3,
+        textColor: [26, 28, 34],
+        lineColor: [226, 228, 233], lineWidth: 0.2,
+        overflow: 'linebreak',
+      },
+      headStyles: {
+        fillColor: [37, 99, 235], textColor: [255, 255, 255],
+        fontStyle: 'bold', fontSize: 8,
+      },
+      alternateRowStyles: { fillColor: [248, 249, 251] },
+      columnStyles: {
+        0: { cellWidth: 54 },
+        1: { cellWidth: 28 },
+        2: { cellWidth: 18 },
+        3: { cellWidth: 30 },
+        4: { cellWidth: 30 },
+        5: { cellWidth: 18 },
+        6: { cellWidth: 22 },
+      },
+      didParseCell(data) {
+        if (data.section !== 'body') return;
+        if (data.column.index === 2) {
+          const c = PRIO_COLORS[data.cell.raw];
+          if (c) { data.cell.styles.textColor = c; data.cell.styles.fontStyle = 'bold'; }
+        }
+      },
+      didDrawPage() { y = doc.lastAutoTable.finalY; },
+    });
+
+    y = doc.lastAutoTable.finalY + 10;
+
+    // Linha separadora entre igrejas
+    if (igIdx < igrejas.length - 1 && y < 270) {
+      doc.setDrawColor(226, 228, 233);
+      doc.line(margin, y - 4, pageW - margin, y - 4);
+    }
+  });
+
+  // Rodapé em todas as páginas
+  const totalPages = doc.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    doc.setFillColor(248, 249, 251);
+    doc.rect(0, 287, pageW, 10, 'F');
+    doc.setFontSize(8); doc.setTextColor(107, 114, 128); doc.setFont('helvetica', 'normal');
+    doc.text('CCB Caieiras — Controle de Avarias', margin, 293);
+    doc.text(`Página ${i} de ${totalPages}`, pageW - margin, 293, { align: 'right' });
+  }
+
+  doc.save(`CCB_Tratamentos_${today.replace(/\//g, '-')}.pdf`);
+  showToast('PDF exportado com sucesso!', 'ok');
 }
 
 function switchTab(name, el) {

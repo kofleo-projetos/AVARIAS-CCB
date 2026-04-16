@@ -121,6 +121,16 @@
     }
   };
 
+  // ── Deletar UMA avaria do Firestore ─────────────────────────────────────
+  window.deleteAvariaFromFirebase = async function(fbId) {
+    if (!fbId) return;
+    try {
+      await deleteDoc(doc(db, 'avarias', fbId));
+    } catch (err) {
+      console.error('deleteAvariaFromFirebase error:', err);
+    }
+  };
+
   // ── Limpar todas as avarias do Firestore ─────────────────────────────────
   window.clearFirebase = async function() {
     if (!confirm('Deseja apagar TODOS os registros do Firebase? Esta ação não pode ser desfeita.')) return;
@@ -595,11 +605,14 @@ footer span { color: var(--accent); font-weight: 500; }
   color:var(--muted2); transition:all .15s;
 }
 .btn-del-mat:hover { background:var(--red-bg); color:var(--red); }
-.mat-hdr {
-  display:grid; grid-template-columns:22px 1fr 80px 90px 90px 28px;
-  gap:6px; padding:4px 8px; font-size:10px; font-family:var(--mono);
-  text-transform:uppercase; letter-spacing:.05em; color:var(--muted2);
+.btn-del-avaria {
+  width:28px; height:28px; background:var(--red-bg); border:1px solid #fca5a5;
+  border-radius:var(--r); display:flex; align-items:center; justify-content:center;
+  cursor:pointer; transition:all .15s; flex-shrink:0; color:var(--red);
 }
+.btn-del-avaria:hover { background:#fee2e2; border-color:var(--red); }
+.btn-del-avaria svg { width:12px; height:12px; stroke:currentColor; fill:none; stroke-width:2; }
+
 </style>
 </head>
 <body>
@@ -720,6 +733,9 @@ footer span { color: var(--accent); font-weight: 500; }
         </div>
         <select class="filter" id="prio-filter-church" onchange="renderPrioridades()" style="min-width:190px">
           <option value="">Todas as igrejas</option>
+        </select>
+        <select class="filter" id="prio-filter-item" onchange="renderPrioridades()" style="min-width:170px">
+          <option value="">Todos os itens</option>
         </select>
         <span class="count-tag" id="prio-count"></span>
       </div>
@@ -992,6 +1008,18 @@ let prioFilter = 'all';
 function handleFileImport(e) {
   const file = e.target.files[0];
   if (!file) return;
+
+  // ── Trava contra arquivo duplicado ──────────────────────────────────────
+  const fileKey = file.name + '|' + file.size;
+  if (window._lastImportedKey && window._lastImportedKey === fileKey) {
+    if (!confirm(`O arquivo "${file.name}" já foi importado anteriormente nesta sessão.\n\nDeseja importar novamente e SOBRESCREVER os dados atuais?`)) {
+      e.target.value = '';
+      return;
+    }
+  }
+  window._lastImportedKey = fileKey;
+  // ────────────────────────────────────────────────────────────────────────
+
   const reader = new FileReader();
   reader.onload = function(ev) {
     try {
@@ -1077,7 +1105,7 @@ function populateData() {
   document.getElementById('dash-content').style.display='block';
   document.getElementById('igrejas-content').style.display='block';
   document.getElementById('prio-content').style.display='block';
-  renderDashboard(); renderIgrejas(); renderPrioridades(); populatePrioChurchFilter();
+  renderDashboard(); renderIgrejas(); renderPrioridades(); populatePrioChurchFilter(); populatePrioItemFilter();
 }
 
 function renderDashboard() {
@@ -1142,15 +1170,21 @@ function renderIgrejas() {
     const shortName= parts[1]||casaName;
     const safeId   = casaName.replace(/[^a-z0-9]/gi,'_');
     const escaped  = casaName.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-    const rows = records.map(r=>`<tr>
-      <td class="tc-num">#${r.num}</td>
-      <td class="tc-item">${r.item}</td>
-      <td style="max-width:260px">${r.avaria}</td>
-      <td><span class="badge ${r.status==='Pendente'?'b-pend':'b-and'}">${r.status}</span></td>
-      <td class="${r.riscoSS==='Sim'?'tc-ss-yes':'tc-ss-no'}">${r.riscoSS==='Sim'?'Sim':'Não'}</td>
-      <td class="tc-date">${r.data}</td>
-      <td>${prioBadge(getPriority(r))}</td>
-    </tr>`).join('');
+    const rows = records.map(r=>{
+      const rIdx = allData.indexOf(r);
+      return `<tr>
+        <td class="tc-num">#${r.num}</td>
+        <td class="tc-item">${r.item}</td>
+        <td style="max-width:260px">${r.avaria}</td>
+        <td><span class="badge ${r.status==='Pendente'?'b-pend':'b-and'}">${r.status}</span></td>
+        <td class="${r.riscoSS==='Sim'?'tc-ss-yes':'tc-ss-no'}">${r.riscoSS==='Sim'?'Sim':'Não'}</td>
+        <td class="tc-date">${r.data}</td>
+        <td>${prioBadge(getPriority(r))}</td>
+        <td><button class="btn-del-avaria" onclick="deleteAvaria(${rIdx})" title="Excluir avaria">
+          <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+        </button></td>
+      </tr>`;
+    }).join('');
     return `<div class="church-card" id="card-${safeId}">
       <div class="church-header" onclick="toggleChurch('${safeId}')">
         <div class="church-code">${code}</div>
@@ -1175,7 +1209,7 @@ function renderIgrejas() {
         </div>
         <div style="overflow-x:auto">
           <table class="avaria-table">
-            <thead><tr><th>N°</th><th>Item</th><th>Descrição</th><th>Status</th><th>Risco SS</th><th>Data</th><th>Prioridade</th></tr></thead>
+            <thead><tr><th>N°</th><th>Item</th><th>Descrição</th><th>Status</th><th>Risco SS</th><th>Data</th><th>Prioridade</th><th></th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>
@@ -1193,6 +1227,13 @@ function populatePrioChurchFilter() {
     churches.map(c=>`<option value="${c}">${c.split(' - ')[1]||c}</option>`).join('');
 }
 
+function populatePrioItemFilter() {
+  const items = [...new Set(allData.map(r=>(r.item||'').trim()).filter(Boolean))].sort();
+  document.getElementById('prio-filter-item').innerHTML =
+    '<option value="">Todos os itens</option>'+
+    items.map(i=>`<option value="${i}">${i}</option>`).join('');
+}
+
 function setPrioFilter(f, btn) {
   prioFilter = f;
   document.querySelectorAll('.prio-btn').forEach(b=>b.className='prio-btn');
@@ -1202,10 +1243,12 @@ function setPrioFilter(f, btn) {
 
 function renderPrioridades() {
   const churchF = document.getElementById('prio-filter-church').value;
+  const itemF   = document.getElementById('prio-filter-item').value;
   const order   = { critical:0, alta:1, media:2, baixa:3 };
   let filtered  = allData.filter(r=>{
     if (prioFilter!=='all' && getPriority(r)!==prioFilter) return false;
     if (churchF && r.casa!==churchF) return false;
+    if (itemF   && (r.item||'').trim()!==itemF) return false;
     return true;
   }).sort((a,b)=>order[getPriority(a)]-order[getPriority(b)]||a.casa.localeCompare(b.casa));
   document.getElementById('prio-count').textContent = `${filtered.length} avarias`;
@@ -1221,13 +1264,45 @@ function renderPrioridades() {
       <span><span class="badge ${r.status==='Pendente'?'b-pend':'b-and'}">${r.status}</span></span>
       <span class="${r.riscoSS==='Sim'?'tc-ss-yes':'tc-ss-no'}">${r.riscoSS==='Sim'?'Sim':'Não'}</span>
       <span>${prioBadge(getPriority(r))}</span>
-      <span><button class="btn-tratar-avaria" onclick="tratarAvariaFromPrio(${avariaIdx})" title="Tratar esta avaria">
-        <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="11" height="11" fill="none" stroke="currentColor"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
-        Tratar
-      </button></span>
+      <span style="display:flex;gap:5px;align-items:center">
+        <button class="btn-tratar-avaria" onclick="tratarAvariaFromPrio(${avariaIdx})" title="Tratar esta avaria">
+          <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="11" height="11" fill="none" stroke="currentColor"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+          Tratar
+        </button>
+        <button class="btn-del-avaria" onclick="deleteAvaria(${avariaIdx})" title="Excluir avaria">
+          <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+        </button>
+      </span>
     </div>`;
   }).join('');
   document.getElementById('priority-list').innerHTML = hdr+(rows||`<div class="empty-state" style="padding:40px"><div class="empty-icon"><svg viewBox="0 0 24 24" stroke-width="1.5"><polyline points="20 6 9 17 4 12"/></svg></div><p>Nenhuma avaria neste filtro.</p></div>`);
+}
+
+async function deleteAvaria(idx) {
+  const r = allData[idx];
+  if (!r) return;
+  const shortName = r.casa.split(' - ')[1] || r.casa;
+  if (!confirm(`Deseja excluir a avaria #${r.num} de "${shortName}"?\n\n"${r.avaria.slice(0,80)}"\n\nEsta ação não pode ser desfeita.`)) return;
+  // Remove do Firebase se tiver ID
+  if (r.id && window.deleteAvariaFromFirebase) {
+    await window.deleteAvariaFromFirebase(r.id);
+  }
+  allData.splice(idx, 1);
+  // Reindexar tratamentos que referenciam avarias
+  tratamentos.forEach(t => {
+    if (t.avariaIdx !== undefined) {
+      if (t.avariaIdx === idx) { t.avariaIdx = undefined; t.avariaRef = '(avaria excluída)'; }
+      else if (t.avariaIdx > idx) t.avariaIdx--;
+    }
+  });
+  if (allData.length === 0) {
+    ['dash-empty','igrejas-empty','prio-empty'].forEach(id=>document.getElementById(id).style.display='flex');
+    ['dash-content','igrejas-content','prio-content'].forEach(id=>document.getElementById(id).style.display='none');
+    showToast('Todas as avarias foram removidas.', 'ok');
+    return;
+  }
+  populateData();
+  showToast(`Avaria #${r.num} excluída.`, 'ok');
 }
 
 function exportPDF(casaName) {
@@ -1662,13 +1737,32 @@ function renderTratarLista() {
       <span>${sitBadge}</span>
       <span style="font-family:var(--mono);font-size:11px;color:var(--muted)">${prazoFmt}</span>
       <span style="font-size:12px">${t.responsavel||'—'}</span>
-      <button class="btn-edit-tr" onclick="abrirFormTratar(${t._id})" title="Editar">
-        <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-      </button>
+      <span style="display:flex;gap:5px;align-items:center">
+        <button class="btn-edit-tr" onclick="abrirFormTratar(${t._id})" title="Editar">
+          <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="btn-del-avaria" onclick="deleteTratamento(${t._id})" title="Excluir tratamento">
+          <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+        </button>
+      </span>
     </div>`;
   }).join('');
 
   lista.innerHTML = hdr + rows;
+}
+
+async function deleteTratamento(id) {
+  const t = tratamentos.find(x => x._id === id);
+  if (!t) return;
+  const label = t.avariaRef || t.descricao.slice(0, 60) || 'este tratamento';
+  if (!confirm(`Deseja excluir o tratamento:\n\n"${label}"\n\nEsta ação não pode ser desfeita.`)) return;
+  // Remove do Firebase se tiver _fbId
+  if (t._fbId && window.deleteAvariaFromFirebase) {
+    await window.deleteAvariaFromFirebase(t._fbId);
+  }
+  tratamentos = tratamentos.filter(x => x._id !== id);
+  renderTratarLista();
+  showToast('Tratamento excluído.', 'ok');
 }
 
 function exportTratamentosPDF() {
